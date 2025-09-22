@@ -1,60 +1,85 @@
 import numpy as np
 
-X_train = np.load('data_train.npy')
-y_train = np.genfromtxt('label_train.csv', delimiter=',', skip_header=1)
+# Chargement des fichiers
+X_train = np.load('data_train.npy')  # fichier NumPy avec les caractéristiques d'entraînement
+X_test = np.load('data_test.npy')    # fichier NumPy avec les caractéristiques de test
+y_train = np.genfromtxt('label_train.csv', delimiter=',')  # fichier CSV avec les étiquettes
+y_train = y_train[1:]
+# Extract the first column as y_train_id
+y_train_id = y_train[:, 0]
 
-# Ajouter une colonne de 1 à X_train pour inclure le biais dans les calculs
-X_train = np.c_[np.ones(X_train.shape[0]), X_train]  # Ajoute une colonne de 1 au début
+# Extract the second column as y_train_labels
+y_train_labels = y_train[:, 1]
 
-# Calculer theta = (X^T X)^(-1) X^T y
-theta = np.linalg.inv(X_train.T @ X_train) @ X_train.T @ y_train
+# Compute term frequencies across all documents
+term_frequencies = np.sum(X_train, axis=0)
 
-# Séparer w et b
-b = theta[0]       # Premier élément de theta
-w = theta[1:]      # Le reste est w
+# Define a threshold for rare or overly common words
+rare_threshold = 0.05 * X_train.shape[0]         # Words appearing in less that 0.05% of the time in all the documents
+common_threshold = 0.8 * X_train.shape[0]  # Words appearing in more than 80% of documents
 
-print("Vecteur w:", w)
-print("Biais b:", b)
+# Create a mask to keep words that are neither too rare nor too common
+valid_words_mask = (term_frequencies > rare_threshold) & (term_frequencies < common_threshold)
 
-def __init__(self, h):
-        self.h = h
+# Filter the X_train and vocab_map based on this mask
+X_train_filtered = X_train[:, valid_words_mask]
+X_test_filtered = X_test[:, valid_words_mask]
 
-def fit(self, train_inputs, train_labels):
-        # self.label_list = np.unique(train_labels)
-        self.X_train = train_inputs
-        self.y_train = train_labels
+class NaiveBayesBinaryClassifier:
+    def __init__(self):
+        self.class_prior = {}  # P(c)
+        self.word_probs = {}   # P(x|c)
 
-def predict(self, test_data):
-    def onehot_vector(label, count_label):
-        onehot_vector = np.zeros(count_label)
-        onehot_vector[label-1] = 1
+    def fit(self, X_train, y_train, alpha=1.0):
+        """
+        X_train: numpy array, shape (n_samples, n_features), where n_features is the number of words (bag of words)
+        y_train: numpy array, shape (n_samples,), binary labels (0 or 1)
+        alpha: smoothing parameter for Laplace smoothing
+        """
+        n_samples, n_features = X_train.shape
+        classes = np.unique(y_train)
 
-        return onehot_vector
-    def weight(self, distance):
-        return 1 if distance < self.h else 0
+        # Calculate prior probabilities P(c)
+        self.class_prior = {cls: np.mean(y_train == cls) for cls in classes}
 
-    unique_classes = np.unique(self.y_train)
-    unique_classes_counts = len(unique_classes)
+        # Calculate conditional probabilities P(x|c) with Laplace smoothing
+        self.word_probs = {}
+        for cls in classes:
+            X_cls = X_train[y_train == cls]
+            self.word_probs[cls] = (np.sum(X_cls, axis=0) + alpha) / (X_cls.shape[0] + alpha * 2)
 
-    prediction_array = []
-    for x in test_data:
-        distances = np.sum(np.abs(self.X_train - x), axis=1) #retourne un vecteur des distances entre x et tous les points d'entrainement
+    def predict(self, X_test):
+        """
+        X_test: numpy array, shape (n_samples, n_features), where n_features is the number of words (bag of words)
+        Returns: predictions, array of shape (n_samples,)
+        """
+        n_samples = X_test.shape[0]
+        predictions = np.zeros(n_samples)
 
-    weights = np.array([weight(self, dist) for dist in distances]) #retourne un vecteur du poids de tous les points d'entrainement par rapport a x
+        for i in range(n_samples):
+            log_probs = {}
+            for cls in self.class_prior:
+                # Calculating log P(c) + log P(x|c)
+                log_prob_cls = np.log(self.class_prior[cls]) + np.sum(X_test[i] * np.log(self.word_probs[cls]))
+                log_probs[cls] = log_prob_cls
 
-    onehot_vect = []
-    for y in self.y_train:
-        onehot = onehot_vector(int(y), unique_classes_counts)
-        onehot_vect.append(onehot)
+            # Select the class with the highest log-probability
+            predictions[i] = max(log_probs, key=log_probs.get)
 
-    if np.sum(weights) != 0:
-        weighted_sum = np.sum(weights[:, np.newaxis] * onehot_vect, axis=0)
-        weighted_sum /= np.sum(weights)
-        prediction_index = np.argmax(weighted_sum)
-        prediction = int(unique_classes[prediction_index])
-    else:
-        prediction = int(draw_rand_label(x, self.y_train))
+        return predictions
 
-    prediction_array.append(prediction)
-        
-    return prediction_array
+
+model = NaiveBayesBinaryClassifier()
+model.fit(X_train_filtered, y_train_labels)
+
+# Prédictions sur l'ensemble de test
+y_pred_bayes_naif = model.predict(X_test_filtered) # terminé en 6sec !
+
+# Générer des indices pour l'ensemble de test
+test_ids = np.arange(0, len(y_pred_bayes_naif))  # Par exemple, créer des IDs allant de 1 à n_samples
+
+# Créer le tableau avec les IDs et les prédictions
+results = np.column_stack((test_ids, y_pred_bayes_naif))
+
+# Sauvegarder les résultats dans un fichier CSV avec les en-têtes
+np.savetxt('naive_bayes_predictions_test.csv', results, delimiter=',', fmt='%d', header='ID,label', comments='')
